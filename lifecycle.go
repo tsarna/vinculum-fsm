@@ -78,6 +78,9 @@ const initEventName = "\x00__init__"
 // The shutdown channel has priority: after each event we check it before
 // pulling the next regular event.
 func (inst *Instance) eventLoop(ctx context.Context) {
+	// Tag the context so Set() can detect calls from this goroutine.
+	ctx = context.WithValue(ctx, eventGoroutineKey{}, inst)
+
 	for {
 		select {
 		case evt, ok := <-inst.eventCh:
@@ -130,17 +133,13 @@ func (inst *Instance) checkPriority(ctx context.Context) bool {
 
 // processInit fires the initial state's on_init hook.
 func (inst *Instance) processInit(ctx context.Context) {
-	inst.onEventGoroutine.Store(true)
-	defer inst.onEventGoroutine.Store(false)
 	defer close(inst.initCh)
 
 	initialState := inst.definition.States[inst.currentState]
-	if initialState == nil || initialState.OnInit == nil {
-		return
+	if initialState != nil && initialState.OnInit != nil {
+		hookCtx := &HookContext{
+			Fsm: inst.capsuleVal,
+		}
+		inst.callHook(ctx, hookCtx, "on_init", initialState.OnInit)
 	}
-
-	hookCtx := &HookContext{
-		Fsm: inst.capsuleVal,
-	}
-	inst.callHook(ctx, hookCtx, "on_init", initialState.OnInit)
 }

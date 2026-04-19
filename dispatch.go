@@ -15,9 +15,6 @@ import (
 // the event processing goroutine, so no locking is needed for the dispatch
 // logic itself -- only for state/storage mutations visible to readers.
 func (inst *Instance) processEvent(ctx context.Context, evt Event) {
-	inst.onEventGoroutine.Store(true)
-	defer inst.onEventGoroutine.Store(false)
-
 	def := inst.definition
 
 	// If the event was already determined to be unmatched by topic matching,
