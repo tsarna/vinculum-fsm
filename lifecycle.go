@@ -16,6 +16,7 @@ func (inst *Instance) Start(ctx context.Context) error {
 
 	inst.eventCh = make(chan Event, queueSize)
 	inst.shutdownCh = make(chan Event, 1)
+	inst.restoreCh = make(chan *restoreRequest, 1)
 
 	var wg sync.WaitGroup
 	inst.wg = &wg
@@ -89,14 +90,15 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 			} else {
 				inst.processEvent(ctx, evt)
 			}
-			// After processing, give the shutdown channel priority
+			// After processing, give priority channels precedence
 			// before pulling the next regular event.
-			select {
-			case evt := <-inst.shutdownCh:
-				inst.processEvent(ctx, evt)
+			if inst.checkPriority(ctx) {
 				return
-			default:
 			}
+
+		case req := <-inst.restoreCh:
+			inst.applyRestore(ctx, req.state, req.storage)
+			req.result <- nil
 
 		case evt := <-inst.shutdownCh:
 			inst.processEvent(ctx, evt)
@@ -105,8 +107,31 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 	}
 }
 
+// checkPriority handles priority channels between regular events.
+// Returns true if the event loop should exit (shutdown).
+func (inst *Instance) checkPriority(ctx context.Context) bool {
+	// Check restore first, then shutdown.
+	select {
+	case req := <-inst.restoreCh:
+		inst.applyRestore(ctx, req.state, req.storage)
+		req.result <- nil
+	default:
+	}
+
+	select {
+	case evt := <-inst.shutdownCh:
+		inst.processEvent(ctx, evt)
+		return true
+	default:
+	}
+
+	return false
+}
+
 // processInit fires the initial state's on_init hook.
 func (inst *Instance) processInit(ctx context.Context) {
+	inst.onEventGoroutine.Store(true)
+	defer inst.onEventGoroutine.Store(false)
 	defer close(inst.initCh)
 
 	initialState := inst.definition.States[inst.currentState]

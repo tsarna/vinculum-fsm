@@ -13,6 +13,7 @@ interface, making it a natural building block for reactive systems.
 - **States, events, and guarded transitions** with wildcard (`*`) support
 - **Hook callbacks** for state entry/exit, transition actions, and machine-level change notifications
 - **Key-value storage** per instance via `Get`/`Set`/`Increment`
+- **Snapshot/restore** via `Get()` (no key) and `Set()` (object) for crash recovery and state migration
 - **Event queue** with single-goroutine processing for safe, serialized transitions
 - **MQTT-style topic matching** with named parameter extraction (`+name`, `#name`)
 - **Priority shutdown** via a dedicated shutdown event channel

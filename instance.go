@@ -40,9 +40,23 @@ type Instance struct {
 	// eventCh and shutdownCh are created at Start time.
 	eventCh    chan Event
 	shutdownCh chan Event
+	restoreCh  chan *restoreRequest
 	initCh     chan struct{}
 	wg         *sync.WaitGroup
 	stopped    atomic.Bool
+
+	// onEventGoroutine is set while the event processing goroutine is
+	// executing hooks. Set() checks this to decide whether to apply a
+	// restore directly (same goroutine) or via the priority channel.
+	onEventGoroutine atomic.Bool
+}
+
+// restoreRequest is sent on restoreCh when a restore is requested from
+// a goroutine other than the event processing goroutine.
+type restoreRequest struct {
+	state   string
+	storage map[string]cty.Value
+	result  chan error
 }
 
 // NewInstance creates a new FSM instance from a validated definition.
@@ -111,12 +125,12 @@ func (inst *Instance) CurrentState() string {
 // --- richcty.Gettable ---
 
 // Get implements richcty.Gettable.
+// get(fsm.x) returns a complete snapshot of the instance state.
 // get(fsm.x, "key") returns the stored value for "key".
 // get(fsm.x, "key", default) returns default if key is not found.
-// get(fsm.x) without a key is reserved for future snapshot support.
 func (inst *Instance) Get(_ context.Context, args []cty.Value) (cty.Value, error) {
 	if len(args) == 0 {
-		return cty.NilVal, fmt.Errorf("get(fsm.%s) without a key is reserved for future use", inst.name)
+		return inst.snapshot(), nil
 	}
 
 	key, err := stringArg(args[0], "key")
@@ -141,7 +155,13 @@ func (inst *Instance) Get(_ context.Context, args []cty.Value) (cty.Value, error
 
 // Set implements richcty.Settable.
 // set(fsm.x, "key", value) stores value under key.
-func (inst *Instance) Set(_ context.Context, args []cty.Value) (cty.Value, error) {
+// set(fsm.x, snapshot) restores a previously captured snapshot.
+func (inst *Instance) Set(ctx context.Context, args []cty.Value) (cty.Value, error) {
+	// Single object arg = snapshot restore.
+	if len(args) == 1 && args[0].Type().IsObjectType() {
+		return inst.restoreFromSnapshot(ctx, args[0])
+	}
+
 	if len(args) < 2 {
 		return cty.NilVal, fmt.Errorf("set(fsm.%s, key, value) requires a key and value", inst.name)
 	}
@@ -230,6 +250,133 @@ func (inst *Instance) Length(_ context.Context) (int64, error) {
 		return 0, nil
 	}
 	return int64(len(inst.eventCh)), nil
+}
+
+// --- Snapshot / Restore ---
+
+// snapshot returns a consistent cty object containing the instance's
+// runtime state. State and storage are read under a single read lock.
+func (inst *Instance) snapshot() cty.Value {
+	inst.mu.RLock()
+	state := inst.currentState
+	storageCopy := make(map[string]cty.Value, len(inst.storage))
+	for k, v := range inst.storage {
+		storageCopy[k] = v
+	}
+	inst.mu.RUnlock()
+
+	count := inst.transitionCount.Load()
+
+	// Build storage object. Use EmptyObjectVal for empty storage so the
+	// field is always an object, never null.
+	var storageVal cty.Value
+	if len(storageCopy) == 0 {
+		storageVal = cty.EmptyObjectVal
+	} else {
+		storageVal = cty.ObjectVal(storageCopy)
+	}
+
+	return cty.ObjectVal(map[string]cty.Value{
+		"_type":            cty.StringVal("fsm"),
+		"state":            cty.StringVal(state),
+		"transition_count": cty.NumberIntVal(count),
+		"storage":          storageVal,
+	})
+}
+
+// restoreFromSnapshot validates and applies a snapshot object. If called
+// from the event processing goroutine (e.g., during on_init), the restore
+// is applied directly. Otherwise it is sent via the priority restore channel.
+func (inst *Instance) restoreFromSnapshot(ctx context.Context, snap cty.Value) (cty.Value, error) {
+	state, storage, err := inst.validateSnapshot(snap)
+	if err != nil {
+		return cty.NilVal, err
+	}
+
+	if inst.onEventGoroutine.Load() {
+		// Called from a hook on the event goroutine — apply directly.
+		inst.applyRestore(ctx, state, storage)
+		return snap, nil
+	}
+
+	// Called from another goroutine — send via priority channel.
+	if inst.restoreCh == nil {
+		return cty.NilVal, fmt.Errorf("fsm %q is not running", inst.name)
+	}
+
+	req := &restoreRequest{
+		state:   state,
+		storage: storage,
+		result:  make(chan error, 1),
+	}
+
+	inst.restoreCh <- req
+	if err := <-req.result; err != nil {
+		return cty.NilVal, err
+	}
+	return snap, nil
+}
+
+// validateSnapshot checks that a cty value is a valid FSM snapshot and
+// extracts the state name and storage map.
+func (inst *Instance) validateSnapshot(snap cty.Value) (string, map[string]cty.Value, error) {
+	if !snap.Type().IsObjectType() {
+		return "", nil, fmt.Errorf("snapshot must be an object")
+	}
+
+	// Check _type.
+	if !snap.Type().HasAttribute("_type") {
+		return "", nil, fmt.Errorf("snapshot missing _type field")
+	}
+	typeVal := snap.GetAttr("_type")
+	if typeVal.Type() != cty.String || typeVal.AsString() != "fsm" {
+		got := "non-string"
+		if typeVal.Type() == cty.String {
+			got = typeVal.AsString()
+		}
+		return "", nil, fmt.Errorf("expected _type \"fsm\", got %q", got)
+	}
+
+	// Check state.
+	if !snap.Type().HasAttribute("state") {
+		return "", nil, fmt.Errorf("snapshot missing state field")
+	}
+	stateVal := snap.GetAttr("state")
+	if stateVal.Type() != cty.String {
+		return "", nil, fmt.Errorf("state must be a string")
+	}
+	state := stateVal.AsString()
+	if _, ok := inst.definition.States[state]; !ok {
+		return "", nil, fmt.Errorf("state %q is not declared in this FSM", state)
+	}
+
+	// Extract storage.
+	storage := make(map[string]cty.Value)
+	if snap.Type().HasAttribute("storage") {
+		storageVal := snap.GetAttr("storage")
+		if !storageVal.IsNull() && storageVal.IsKnown() {
+			if !storageVal.Type().IsObjectType() {
+				return "", nil, fmt.Errorf("storage must be an object")
+			}
+			for k, v := range storageVal.AsValueMap() {
+				storage[k] = v
+			}
+		}
+	}
+
+	return state, storage, nil
+}
+
+// applyRestore replaces the current state and storage, then notifies
+// watchers. No hooks fire — this is a restore, not a transition.
+func (inst *Instance) applyRestore(ctx context.Context, state string, storage map[string]cty.Value) {
+	inst.mu.Lock()
+	oldState := inst.currentState
+	inst.currentState = state
+	inst.storage = storage
+	inst.mu.Unlock()
+
+	inst.NotifyAll(ctx, cty.StringVal(oldState), cty.StringVal(state))
 }
 
 // stringArg extracts a string from a cty.Value, returning a descriptive error.

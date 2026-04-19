@@ -169,13 +169,22 @@ func TestInstance_Storage_Increment(t *testing.T) {
 	}
 }
 
-func TestInstance_Storage_GetNoArgs(t *testing.T) {
+func TestInstance_Snapshot_NoArgs(t *testing.T) {
 	inst := NewInstance("test", newTestDefinition())
 	ctx := context.Background()
 
-	_, err := inst.Get(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for Get() without key")
+	// Get() with no args returns a snapshot.
+	snap, err := inst.Get(ctx, nil)
+	if err != nil {
+		t.Fatalf("Get() snapshot error: %v", err)
+	}
+	if snap.Type().HasAttribute("_type") {
+		typeVal := snap.GetAttr("_type")
+		if typeVal.AsString() != "fsm" {
+			t.Fatalf("expected _type 'fsm', got %q", typeVal.AsString())
+		}
+	} else {
+		t.Fatal("snapshot missing _type field")
 	}
 }
 
