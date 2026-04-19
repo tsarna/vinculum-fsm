@@ -20,4 +20,9 @@ type Event struct {
 
 	// TopicParams contains named captures from MQTT pattern matching.
 	TopicParams map[string]string
+
+	// unmatched is true when the event came from OnEvent but no event
+	// definition matched the topic. In this case, processEvent should
+	// only fire on_event on the current state, not look up by name.
+	unmatched bool
 }

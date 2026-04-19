@@ -33,9 +33,12 @@ type Instance struct {
 	// capsuleVal is the cty capsule wrapping this instance, set after creation.
 	capsuleVal cty.Value
 
-	// eventCh and shutdownCh are created at Start time (Phase 2).
+	// eventCh and shutdownCh are created at Start time.
 	eventCh    chan Event
 	shutdownCh chan Event
+	initCh     chan struct{}
+	wg         *sync.WaitGroup
+	stopped    atomic.Bool
 }
 
 // NewInstance creates a new FSM instance from a validated definition.
