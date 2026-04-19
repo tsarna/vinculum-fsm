@@ -9,6 +9,7 @@ import (
 
 	richcty "github.com/tsarna/rich-cty-types"
 	"github.com/zclconf/go-cty/cty"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Instance is a running state machine: it holds the current state, storage,
@@ -32,6 +33,9 @@ type Instance struct {
 
 	// capsuleVal is the cty capsule wrapping this instance, set after creation.
 	capsuleVal cty.Value
+
+	// tracer is set via SetTracerProvider. If nil, no spans are created.
+	tracer trace.Tracer
 
 	// eventCh and shutdownCh are created at Start time.
 	eventCh    chan Event
@@ -59,6 +63,15 @@ func NewInstance(name string, def *Definition) *Instance {
 func (inst *Instance) Configure(def *Definition) {
 	inst.definition = def
 	inst.currentState = def.InitialState
+}
+
+// SetTracerProvider configures tracing for this instance. If tp is non-nil,
+// each transition creates a span with FSM-specific attributes. Must be
+// called before Start.
+func (inst *Instance) SetTracerProvider(tp trace.TracerProvider) {
+	if tp != nil {
+		inst.tracer = tp.Tracer("vinculum/fsm")
+	}
 }
 
 // Name returns the instance name.

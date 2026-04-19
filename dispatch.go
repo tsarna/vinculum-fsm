@@ -2,8 +2,12 @@ package fsm
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/zclconf/go-cty/cty"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // processEvent handles a single event: finds a matching transition, executes
@@ -49,6 +53,20 @@ func (inst *Instance) processEvent(ctx context.Context, evt Event) {
 		Topic:       evt.Topic,
 		TopicParams: evt.TopicParams,
 		Fsm:         inst.capsuleVal,
+	}
+
+	// Start a tracing span for this transition if a tracer is configured.
+	if inst.tracer != nil {
+		var span trace.Span
+		ctx, span = inst.tracer.Start(ctx, fmt.Sprintf("fsm.%s/%s", inst.name, evt.Name),
+			trace.WithAttributes(
+				attribute.String("fsm.name", inst.name),
+				attribute.String("fsm.event", evt.Name),
+				attribute.String("fsm.old_state", currentState),
+				attribute.String("fsm.new_state", tr.ToState),
+			),
+		)
+		defer span.End()
 	}
 
 	oldStateDef := def.States[currentState]
@@ -161,10 +179,15 @@ func (inst *Instance) callHook(ctx context.Context, hookCtx *HookContext, hookNa
 	}
 }
 
-// handleHookError routes a hook error to the on_error handler if configured.
-// If no on_error handler exists, the error is silently discarded (the config
-// handler in vinculum will wire on_error to log via zap).
+// handleHookError routes a hook error to the on_error handler if configured,
+// and records the error on the active span (if tracing).
 func (inst *Instance) handleHookError(ctx context.Context, hookCtx *HookContext, hookName string, err error) {
+	// Record on the active span if tracing.
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		span.RecordError(err, trace.WithAttributes(attribute.String("fsm.hook", hookName)))
+		span.SetStatus(codes.Error, err.Error())
+	}
+
 	if inst.definition.OnError == nil {
 		return
 	}
