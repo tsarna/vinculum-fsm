@@ -44,16 +44,14 @@ type Instance struct {
 	initCh     chan struct{}
 	wg         *sync.WaitGroup
 	stopped    atomic.Bool
+
+	// eventGoroutineID stores the goroutine ID of the event processing
+	// goroutine. Set() compares against this to detect same-goroutine
+	// calls and apply restores directly instead of deadlocking.
+	eventGoroutineID atomic.Int64
 }
 
-// eventGoroutineKey is a context key used to tag the event processing
-// goroutine's context. Set() checks for this to detect same-goroutine
-// calls (e.g., from on_init hooks) and apply the restore directly
-// instead of deadlocking on the priority channel.
-type eventGoroutineKey struct{}
-
-// restoreRequest is sent on restoreCh when a restore is requested from
-// a goroutine other than the event processing goroutine.
+// restoreRequest is sent on restoreCh to request a state restore.
 type restoreRequest struct {
 	state   string
 	storage map[string]cty.Value
@@ -294,9 +292,9 @@ func (inst *Instance) restoreFromSnapshot(ctx context.Context, snap cty.Value) (
 		return cty.NilVal, err
 	}
 
-	// If we're on the event processing goroutine (detected via context),
+	// If called from the event processing goroutine (e.g., during on_init),
 	// apply directly to avoid deadlock. Otherwise use the priority channel.
-	if ctx.Value(eventGoroutineKey{}) == inst {
+	if goroutineID() == inst.eventGoroutineID.Load() {
 		inst.applyRestore(ctx, state, storage)
 		return snap, nil
 	}

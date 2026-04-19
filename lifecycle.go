@@ -78,8 +78,8 @@ const initEventName = "\x00__init__"
 // The shutdown channel has priority: after each event we check it before
 // pulling the next regular event.
 func (inst *Instance) eventLoop(ctx context.Context) {
-	// Tag the context so Set() can detect calls from this goroutine.
-	ctx = context.WithValue(ctx, eventGoroutineKey{}, inst)
+	inst.eventGoroutineID.Store(goroutineID())
+	defer inst.eventGoroutineID.Store(0)
 
 	for {
 		select {
