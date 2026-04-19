@@ -54,6 +54,13 @@ func NewInstance(name string, def *Definition) *Instance {
 	return inst
 }
 
+// Configure replaces the placeholder definition with the real one and
+// resets the initial state. Must be called before Start.
+func (inst *Instance) Configure(def *Definition) {
+	inst.definition = def
+	inst.currentState = def.InitialState
+}
+
 // Name returns the instance name.
 func (inst *Instance) Name() string {
 	return inst.name
