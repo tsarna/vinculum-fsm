@@ -42,4 +42,9 @@ type HookContext struct {
 
 	// Hook is the name of the hook that produced an error, available only in on_error.
 	Hook string
+
+	// UserData is an opaque field for use by hook implementations. The config
+	// handler uses it to cache the built HCL eval context across multiple hook
+	// invocations within the same transition, avoiding redundant construction.
+	UserData interface{}
 }

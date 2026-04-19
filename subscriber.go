@@ -71,7 +71,7 @@ func (inst *Instance) PassThrough(_ bus.EventBusMessage) error {
 // definitions' topic patterns. Returns the event name and any extracted
 // topic parameters, or empty string if no event matches.
 //
-// Matching rules from the spec:
+// Matching rules:
 //   - Events with a topic pattern are checked in declaration order; first match wins.
 //   - Events with neither topic nor when match when topic equals the event name (literal).
 //   - Events with when but no topic are reactive-only and skip topic matching.
