@@ -25,4 +25,16 @@ type Event struct {
 	// definition matched the topic. In this case, processEvent should
 	// only fire on_event on the current state, not look up by name.
 	unmatched bool
+
+	// restore carries validated snapshot data for a restore event.
+	restore *restoreData
 }
+
+// restoreData holds the validated state and storage for a restore.
+type restoreData struct {
+	state   string
+	storage map[string]cty.Value
+}
+
+// restoreEventName is a sentinel used internally for restore events.
+const restoreEventName = "\x00__restore__"

@@ -397,13 +397,12 @@ func TestRestore_NotStarted(t *testing.T) {
 
 	snap := cty.ObjectVal(map[string]cty.Value{
 		"_type":            cty.StringVal("fsm"),
-		"state":            cty.StringVal("idle"),
+		"state":            cty.StringVal("active"),
 		"transition_count": cty.NumberIntVal(0),
 		"storage":          cty.EmptyObjectVal,
 	})
 
-	// Restore on a non-started instance should fail (not on event goroutine,
-	// restoreCh is nil).
+	// Restore on a non-started instance fails because the event channel is nil.
 	_, err := inst.Set(context.Background(), []cty.Value{snap})
 	if err == nil {
 		t.Fatal("expected error for restore on non-started instance")

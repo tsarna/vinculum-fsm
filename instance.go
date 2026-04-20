@@ -40,22 +40,9 @@ type Instance struct {
 	// eventCh and shutdownCh are created at Start time.
 	eventCh    chan Event
 	shutdownCh chan Event
-	restoreCh  chan *restoreRequest
 	initCh     chan struct{}
 	wg         *sync.WaitGroup
 	stopped    atomic.Bool
-
-	// eventGoroutineID stores the goroutine ID of the event processing
-	// goroutine. Set() compares against this to detect same-goroutine
-	// calls and apply restores directly instead of deadlocking.
-	eventGoroutineID atomic.Int64
-}
-
-// restoreRequest is sent on restoreCh to request a state restore.
-type restoreRequest struct {
-	state   string
-	storage map[string]cty.Value
-	result  chan error
 }
 
 // NewInstance creates a new FSM instance from a validated definition.
@@ -283,35 +270,20 @@ func (inst *Instance) snapshot() cty.Value {
 	})
 }
 
-// restoreFromSnapshot validates and applies a snapshot object. If called
-// from the event processing goroutine (e.g., during on_init), the restore
-// is applied directly. Otherwise it is sent via the priority restore channel.
-func (inst *Instance) restoreFromSnapshot(ctx context.Context, snap cty.Value) (cty.Value, error) {
+// restoreFromSnapshot validates a snapshot and enqueues a restore event.
+// Validation is synchronous; the actual state/storage swap is async
+// (processed by the event goroutine like any other event).
+func (inst *Instance) restoreFromSnapshot(_ context.Context, snap cty.Value) (cty.Value, error) {
 	state, storage, err := inst.validateSnapshot(snap)
 	if err != nil {
 		return cty.NilVal, err
 	}
 
-	// If called from the event processing goroutine (e.g., during on_init),
-	// apply directly to avoid deadlock. Otherwise use the priority channel.
-	if goroutineID() == inst.eventGoroutineID.Load() {
-		inst.applyRestore(ctx, state, storage)
-		return snap, nil
-	}
-
-	if inst.restoreCh == nil {
+	if !inst.EnqueueEvent(Event{
+		Name:    restoreEventName,
+		restore: &restoreData{state: state, storage: storage},
+	}) {
 		return cty.NilVal, fmt.Errorf("fsm %q is not running", inst.name)
-	}
-
-	req := &restoreRequest{
-		state:   state,
-		storage: storage,
-		result:  make(chan error, 1),
-	}
-
-	inst.restoreCh <- req
-	if err := <-req.result; err != nil {
-		return cty.NilVal, err
 	}
 	return snap, nil
 }

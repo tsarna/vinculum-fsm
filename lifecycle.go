@@ -16,7 +16,6 @@ func (inst *Instance) Start(ctx context.Context) error {
 
 	inst.eventCh = make(chan Event, queueSize)
 	inst.shutdownCh = make(chan Event, 1)
-	inst.restoreCh = make(chan *restoreRequest, 1)
 
 	var wg sync.WaitGroup
 	inst.wg = &wg
@@ -61,7 +60,7 @@ func (inst *Instance) Stop() error {
 // the call blocks until space is available. Returns false if the instance
 // has been stopped (the event is silently dropped).
 func (inst *Instance) EnqueueEvent(evt Event) bool {
-	if inst.stopped.Load() {
+	if inst.eventCh == nil || inst.stopped.Load() {
 		return false
 	}
 	// Use a recover guard: even with the stopped check above, a concurrent
@@ -78,9 +77,6 @@ const initEventName = "\x00__init__"
 // The shutdown channel has priority: after each event we check it before
 // pulling the next regular event.
 func (inst *Instance) eventLoop(ctx context.Context) {
-	inst.eventGoroutineID.Store(goroutineID())
-	defer inst.eventGoroutineID.Store(0)
-
 	for {
 		select {
 		case evt, ok := <-inst.eventCh:
@@ -88,47 +84,28 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 				// Channel closed -- shutdown without shutdown_event.
 				return
 			}
-			if evt.Name == initEventName {
+			switch evt.Name {
+			case initEventName:
 				inst.processInit(ctx)
-			} else {
+			case restoreEventName:
+				inst.applyRestore(ctx, evt.restore.state, evt.restore.storage)
+			default:
 				inst.processEvent(ctx, evt)
 			}
-			// After processing, give priority channels precedence
+			// After processing, give the shutdown channel priority
 			// before pulling the next regular event.
-			if inst.checkPriority(ctx) {
+			select {
+			case evt := <-inst.shutdownCh:
+				inst.processEvent(ctx, evt)
 				return
+			default:
 			}
-
-		case req := <-inst.restoreCh:
-			inst.applyRestore(ctx, req.state, req.storage)
-			req.result <- nil
 
 		case evt := <-inst.shutdownCh:
 			inst.processEvent(ctx, evt)
 			return
 		}
 	}
-}
-
-// checkPriority handles priority channels between regular events.
-// Returns true if the event loop should exit (shutdown).
-func (inst *Instance) checkPriority(ctx context.Context) bool {
-	// Check restore first, then shutdown.
-	select {
-	case req := <-inst.restoreCh:
-		inst.applyRestore(ctx, req.state, req.storage)
-		req.result <- nil
-	default:
-	}
-
-	select {
-	case evt := <-inst.shutdownCh:
-		inst.processEvent(ctx, evt)
-		return true
-	default:
-	}
-
-	return false
 }
 
 // processInit fires the initial state's on_init hook.
