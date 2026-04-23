@@ -3,9 +3,9 @@ package fsm
 import (
 	"context"
 
-	"github.com/amir-yaghoubi/mqttpattern"
 	"github.com/tsarna/go2cty2go"
 	bus "github.com/tsarna/vinculum-bus"
+	"github.com/tsarna/vinculum-bus/topicmatch"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -80,8 +80,8 @@ func (inst *Instance) PassThrough(_ bus.EventBusMessage) error {
 func (inst *Instance) matchTopic(topic string) (string, map[string]string) {
 	for _, evt := range inst.definition.Events {
 		if evt.TopicPattern != "" {
-			// Pattern match using mqttpattern.
-			params := mqttpattern.Exec(evt.TopicPattern, topic)
+			// Pattern match using topicmatch (MQTT-style wildcards).
+			params := topicmatch.Exec(evt.TopicPattern, topic)
 			if params != nil {
 				return evt.Name, params
 			}

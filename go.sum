@@ -22,8 +22,8 @@ github.com/tsarna/go2cty2go v0.1.3 h1:YJ07Xl6agKrhtP/mCOkWL8t1MV9ry8kqNkR/w+m0Kn
 github.com/tsarna/go2cty2go v0.1.3/go.mod h1:4691K1NVryGKWribbwTppXaVbUIDLvJVBwA/EbMN6r8=
 github.com/tsarna/rich-cty-types v0.1.0 h1:kB5UImttQIUEwwaarYD2z9Iy2gxlHknCPunjNlXgRGI=
 github.com/tsarna/rich-cty-types v0.1.0/go.mod h1:ExfNIaAeqEo19WLcrFAGPfsLmIQ4GCEvhu8MRbZeV4k=
-github.com/tsarna/vinculum-bus v0.11.0 h1:vg2HbElFoh0s6vmPnTvcNwbccO2/qp7o5nYTTC8l5sw=
-github.com/tsarna/vinculum-bus v0.11.0/go.mod h1:fwVN24q/2iKXvtZQeiRB0tW41WsGWsV6nyvwetB25fA=
+github.com/tsarna/vinculum-bus v0.12.0 h1:tCgOUpoKfX59uopUVMPTYI9o+WJL3w/byemaIueLtEo=
+github.com/tsarna/vinculum-bus v0.12.0/go.mod h1:fwVN24q/2iKXvtZQeiRB0tW41WsGWsV6nyvwetB25fA=
 github.com/zclconf/go-cty v1.18.1 h1:yEGE8M4iIZlyKQURZNb2SnEyZlZHUcBCnx6KF81KuwM=
 github.com/zclconf/go-cty v1.18.1/go.mod h1:qpnV6EDNgC1sns/AleL1fvatHw72j+S+nS+MJ+T2CSg=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
