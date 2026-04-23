@@ -76,7 +76,21 @@ const initEventName = "\x00__init__"
 // eventLoop is the single goroutine that processes events sequentially.
 // The shutdown channel has priority: after each event we check it before
 // pulling the next regular event.
+//
+// Each event is processed under a context derived from evt.Ctx (the caller's
+// context captured at enqueue time). context.WithoutCancel is applied so an
+// upstream cancellation (e.g. an HTTP request completing before its enqueued
+// event is dequeued) cannot interrupt hook processing. Values from the
+// caller's context — trace spans, auth, etc. — are preserved. Events with a
+// nil Ctx fall back to the eventLoop's own ctx.
 func (inst *Instance) eventLoop(ctx context.Context) {
+	process := func(evt Event) context.Context {
+		c := evt.Ctx
+		if c == nil {
+			c = ctx
+		}
+		return context.WithoutCancel(c)
+	}
 	for {
 		select {
 		case evt, ok := <-inst.eventCh:
@@ -84,25 +98,26 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 				// Channel closed -- shutdown without shutdown_event.
 				return
 			}
+			eventCtx := process(evt)
 			switch evt.Name {
 			case initEventName:
-				inst.processInit(ctx)
+				inst.processInit(eventCtx)
 			case restoreEventName:
-				inst.applyRestore(ctx, evt.restore.state, evt.restore.storage)
+				inst.applyRestore(eventCtx, evt.restore.state, evt.restore.storage)
 			default:
-				inst.processEvent(ctx, evt)
+				inst.processEvent(eventCtx, evt)
 			}
 			// After processing, give the shutdown channel priority
 			// before pulling the next regular event.
 			select {
 			case evt := <-inst.shutdownCh:
-				inst.processEvent(ctx, evt)
+				inst.processEvent(process(evt), evt)
 				return
 			default:
 			}
 
 		case evt := <-inst.shutdownCh:
-			inst.processEvent(ctx, evt)
+			inst.processEvent(process(evt), evt)
 			return
 		}
 	}

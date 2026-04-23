@@ -1,10 +1,24 @@
 package fsm
 
-import "github.com/zclconf/go-cty/cty"
+import (
+	"context"
+
+	"github.com/zclconf/go-cty/cty"
+)
 
 // Event represents an incoming event to be processed by the FSM instance.
 // Events are enqueued and processed sequentially by the event goroutine.
 type Event struct {
+	// Ctx carries the originating caller's context across the event-queue
+	// boundary. Values (trace span, auth, etc.) are preserved into hook
+	// evaluation; cancellation is NOT — the event loop applies
+	// context.WithoutCancel before invoking hooks, so an upstream
+	// cancellation (e.g. HTTP request completion) cannot interrupt FSM
+	// state transitions mid-flight.
+	//
+	// May be nil; treated as context.Background() by the event loop.
+	Ctx context.Context
+
 	// Name is the event name, used to match against EventDef declarations.
 	Name string
 

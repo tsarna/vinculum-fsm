@@ -56,9 +56,19 @@ func (inst *Instance) processEvent(ctx context.Context, evt Event) {
 	}
 
 	// Start a tracing span for this transition if a tracer is configured.
+	// The FSM event loop processes events asynchronously relative to whatever
+	// enqueued them (bus delivery, reactive callback, direct EnqueueEvent
+	// caller). By the time we dequeue and process, the enqueuing caller's
+	// span has typically ended — so a child span would violate OTel's
+	// parent-before-child discipline. Instead, create a new root span with
+	// a Link back to the caller's span for causal correlation (matches
+	// vinculum-bus's deliverAsync pattern).
 	if inst.tracer != nil {
+		link := trace.LinkFromContext(ctx)
 		var span trace.Span
 		ctx, span = inst.tracer.Start(ctx, fmt.Sprintf("fsm.%s/%s", inst.name, evt.Name),
+			trace.WithNewRoot(),
+			trace.WithLinks(link),
 			trace.WithAttributes(
 				attribute.String("fsm.name", inst.name),
 				attribute.String("fsm.event", evt.Name),

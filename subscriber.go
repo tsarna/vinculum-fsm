@@ -43,6 +43,7 @@ func (inst *Instance) OnEvent(ctx context.Context, topic string, message any, fi
 		// No event matches this topic -- enqueue as unmatched so only
 		// on_event fires (not an accidental EventByName lookup).
 		inst.EnqueueEvent(Event{
+			Ctx:       ctx,
 			Name:      topic,
 			Value:     eventValue,
 			Fields:    fields,
@@ -53,6 +54,7 @@ func (inst *Instance) OnEvent(ctx context.Context, topic string, message any, fi
 	}
 
 	inst.EnqueueEvent(Event{
+		Ctx:         ctx,
 		Name:        eventName,
 		Value:       eventValue,
 		Fields:      fields,
