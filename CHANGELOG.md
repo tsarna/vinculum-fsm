@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [0.5.0] - 2026-05-29
+
 - **Breaking:** bump `rich-cty-types` to v0.2.0. `Watcher.OnChange` now takes
   a `source Watchable` parameter identifying which Watchable fired the
   notification. Any code that registers a Watcher on an FSM `Instance` must
