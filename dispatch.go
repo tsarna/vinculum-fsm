@@ -110,7 +110,7 @@ func (inst *Instance) processEvent(ctx context.Context, evt Event) {
 	}
 
 	// 6. Notify watchers (after all locks released)
-	inst.NotifyAll(ctx, cty.StringVal(currentState), cty.StringVal(tr.ToState))
+	inst.NotifyAll(ctx, inst, cty.StringVal(currentState), cty.StringVal(tr.ToState))
 }
 
 // matchTransition finds the first matching transition for the given event and

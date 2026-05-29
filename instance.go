@@ -347,7 +347,7 @@ func (inst *Instance) applyRestore(ctx context.Context, state string, storage ma
 	inst.storage = storage
 	inst.mu.Unlock()
 
-	inst.NotifyAll(ctx, cty.StringVal(oldState), cty.StringVal(state))
+	inst.NotifyAll(ctx, inst, cty.StringVal(oldState), cty.StringVal(state))
 }
 
 // stringArg extracts a string from a cty.Value, returning a descriptive error.

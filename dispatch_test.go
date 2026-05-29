@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	richcty "github.com/tsarna/rich-cty-types"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -393,7 +394,7 @@ type testWatcher struct {
 	fn func(ctx context.Context, old, new_ cty.Value)
 }
 
-func (w *testWatcher) OnChange(ctx context.Context, old, new_ cty.Value) {
+func (w *testWatcher) OnChange(ctx context.Context, _ richcty.Watchable, old, new_ cty.Value) {
 	w.fn(ctx, old, new_)
 }
 
