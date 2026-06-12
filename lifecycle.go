@@ -41,9 +41,18 @@ func (inst *Instance) Start(ctx context.Context) error {
 // Stop shuts down the FSM gracefully. If a shutdown_event is configured, it
 // is injected via the priority channel and processed before remaining events.
 // Then the event queue is closed and the processing goroutine exits.
-// Stop is idempotent -- calling it multiple times is safe.
+// Stop is idempotent -- calling it multiple times is safe, as is calling it
+// on an instance that was never Started (e.g. config validation that builds
+// then tears down without starting): the channels are nil until Start, so
+// there is nothing to shut down.
 func (inst *Instance) Stop() error {
 	if !inst.stopped.CompareAndSwap(false, true) {
+		return nil
+	}
+	// Never started -- Start is what creates eventCh/shutdownCh. Sending the
+	// shutdown event or closing eventCh below would otherwise block (nil send)
+	// or panic (close of nil channel).
+	if inst.eventCh == nil {
 		return nil
 	}
 	if inst.definition.ShutdownEvent != "" {

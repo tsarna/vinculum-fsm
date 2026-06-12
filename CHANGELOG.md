@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [0.5.1] - 2026-06-12
+
+### Fixed
+
+- **`Instance.Stop()` is now safe to call on an instance that was never
+  `Start()`ed.** Previously it panicked with `close of nil channel` (the event
+  channel is nil until `Start`), and with a `shutdown_event` configured it would
+  block forever sending on the nil shutdown channel. This is exactly what config
+  validation (`vinculum check`) does — build the config, then tear it down
+  without starting — so checking any configuration containing an FSM crashed.
+  `Stop()` now returns a no-op when the instance was never started.
+
 ## [0.5.0] - 2026-05-29
 
 - **Breaking:** bump `rich-cty-types` to v0.2.0. `Watcher.OnChange` now takes

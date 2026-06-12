@@ -3,6 +3,7 @@ package fsm
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestLifecycle_OnInitFires(t *testing.T) {
@@ -142,5 +143,45 @@ func TestLifecycle_StopWithoutShutdownEvent(t *testing.T) {
 	// Stop without a shutdown_event configured -- should exit cleanly.
 	if err := inst.Stop(); err != nil {
 		t.Fatalf("Stop() error: %v", err)
+	}
+}
+
+func TestLifecycle_StopBeforeStart(t *testing.T) {
+	d := NewDefinition("idle")
+	d.AddState(&StateDef{Name: "idle"})
+
+	// Build an instance but never Start it (eventCh/shutdownCh stay nil).
+	// This is what config validation does: build, then tear down. Stop must
+	// be a safe no-op, not panic on close of a nil channel.
+	inst := NewInstance("test", d)
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("Stop() before Start error: %v", err)
+	}
+	// Idempotent: a second Stop is also safe.
+	if err := inst.Stop(); err != nil {
+		t.Fatalf("second Stop() error: %v", err)
+	}
+}
+
+func TestLifecycle_StopBeforeStartWithShutdownEvent(t *testing.T) {
+	d := NewDefinition("idle")
+	d.AddState(&StateDef{Name: "idle"})
+	d.AddState(&StateDef{Name: "off"})
+	d.AddEvent(&EventDef{
+		Name:        "shutdown",
+		Transitions: []*TransitionDef{{FromState: "idle", ToState: "off"}},
+	})
+	d.ShutdownEvent = "shutdown"
+
+	// With a shutdown_event configured, the unguarded path would send on a
+	// nil shutdownCh and block forever. Stop-before-Start must still return
+	// promptly. Run in a goroutine and assert it completes.
+	inst := NewInstance("test", d)
+	done := make(chan struct{})
+	go func() { inst.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() before Start with shutdown_event blocked (nil channel send)")
 	}
 }
