@@ -20,8 +20,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tsarna/go2cty2go v0.1.3 h1:YJ07Xl6agKrhtP/mCOkWL8t1MV9ry8kqNkR/w+m0Kns=
 github.com/tsarna/go2cty2go v0.1.3/go.mod h1:4691K1NVryGKWribbwTppXaVbUIDLvJVBwA/EbMN6r8=
-github.com/tsarna/rich-cty-types v0.2.0 h1:eUljPjXsVA8SKuwDO/LgdgsNESeTnhtqvELPz8Qbq08=
-github.com/tsarna/rich-cty-types v0.2.0/go.mod h1:CFQPkG2Ghc5mHIFyFLA1kHs51QLXbuIKuypdhX9dbAo=
+github.com/tsarna/rich-cty-types v0.3.0 h1:Z47Df3iSpGA+etByeItBWG58iaTQ+FswynK81iQJMr4=
+github.com/tsarna/rich-cty-types v0.3.0/go.mod h1:CFQPkG2Ghc5mHIFyFLA1kHs51QLXbuIKuypdhX9dbAo=
 github.com/tsarna/vinculum-bus v0.15.1 h1:PPpDL+JmHLVvekLLplcQuEhWzXFqTbi1NI/IaYOWNUU=
 github.com/tsarna/vinculum-bus v0.15.1/go.mod h1:7FSTpdKcFpzDZ6Wycp88hKtndJBPSWMOXGRpT7At+cc=
 github.com/zclconf/go-cty v1.18.1 h1:yEGE8M4iIZlyKQURZNb2SnEyZlZHUcBCnx6KF81KuwM=
