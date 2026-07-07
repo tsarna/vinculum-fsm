@@ -2,6 +2,8 @@ github.com/amir-yaghoubi/mqttpattern v0.0.0-20250829083210-f7d8d46a786e h1:VPK/9
 github.com/amir-yaghoubi/mqttpattern v0.0.0-20250829083210-f7d8d46a786e/go.mod h1:eTdxCpk5dOaksxMS8HtbTRyjTB1VsgmnpzWtttiHEBY=
 github.com/apparentlymart/go-textseg/v15 v15.0.0 h1:uYvfpb3DyLSCGWnctWKGj857c6ew1u1fNQOlOtuGxQY=
 github.com/apparentlymart/go-textseg/v15 v15.0.0/go.mod h1:K8XmNZdhEBkdlyDdvbmmsvpAG721bKi0joRfFdHIWJ4=
+github.com/apparentlymart/go-textseg/v17 v17.0.1 h1:bpMXRgQ5cEoRNuQke1a80/Nl6w3G5eoIbWo9f3gXkAs=
+github.com/apparentlymart/go-textseg/v17 v17.0.1/go.mod h1:fa8X4jgGeevslICIY6LcdjkSecWnXmYd9Lk34z/VxZs=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
@@ -24,8 +26,8 @@ github.com/tsarna/rich-cty-types v0.4.0 h1:3UqExVy5cbWrBtOyt3vg2XPOCHXfaLD/ycKaQ
 github.com/tsarna/rich-cty-types v0.4.0/go.mod h1:CFQPkG2Ghc5mHIFyFLA1kHs51QLXbuIKuypdhX9dbAo=
 github.com/tsarna/vinculum-bus v0.15.1 h1:PPpDL+JmHLVvekLLplcQuEhWzXFqTbi1NI/IaYOWNUU=
 github.com/tsarna/vinculum-bus v0.15.1/go.mod h1:7FSTpdKcFpzDZ6Wycp88hKtndJBPSWMOXGRpT7At+cc=
-github.com/zclconf/go-cty v1.18.1 h1:yEGE8M4iIZlyKQURZNb2SnEyZlZHUcBCnx6KF81KuwM=
-github.com/zclconf/go-cty v1.18.1/go.mod h1:qpnV6EDNgC1sns/AleL1fvatHw72j+S+nS+MJ+T2CSg=
+github.com/zclconf/go-cty v1.19.0 h1:IV8WdqYZc2c5rLX9bEoLNXKojBAp0MZPBHMIrCoa/s4=
+github.com/zclconf/go-cty v1.19.0/go.mod h1:12W89jGn3JCOIQi7infWr9m80rOkb5RNYJqXMZcN4c8=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/otel v1.44.0 h1:JjwHmHpA4iZ3wBxluu2fbbE7j4kqlE8jXyAyPXH7HqU=
