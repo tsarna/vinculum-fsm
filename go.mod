@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	github.com/tsarna/go2cty2go v0.3.0
 	github.com/tsarna/rich-cty-types v0.5.1
-	github.com/tsarna/vinculum-bus v0.15.1
+	github.com/tsarna/vinculum-bus v0.16.0
 	github.com/zclconf/go-cty v1.19.0
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
