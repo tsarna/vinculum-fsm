@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Delivering an event to an instance no longer counts as handling it.**
+  `Instance` reports `bus.Deferred`, so a receiver that acknowledges its broker
+  deliveries automatically no longer does so the moment the event is queued. The
+  event loop settles instead, once every hook for that event has run.
+
+  It settles as handled, which is honest rather than optimistic: a hook that
+  fails is routed to the machine's own `on_error` handler and does not
+  propagate, so "the hooks ran" is the outcome the FSM has to report. A
+  configuration that wants a hook failure to reach the broker settles from the
+  hook itself.
+
+  A panic in a hook nacks before it unwinds. The panic still brings the process
+  down; the difference is that the broker hears why now instead of waiting out
+  a lease.
+
+### Fixed
+
+- **`OnEvent` no longer reports a dropped event as accepted.** An event handed
+  to a stopped instance was silently discarded and `OnEvent` returned `nil`, so
+  nothing upstream could tell the difference between an event that was queued
+  and one that was thrown away. It now returns `ErrInstanceStopped`, which is a
+  refusal rather than a failure: nothing ran, and nothing will.
+
 ## [0.5.1] - 2026-06-12
 
 ### Fixed

@@ -2,7 +2,10 @@ package fsm
 
 import (
 	"context"
+	"fmt"
 	"sync"
+
+	bus "github.com/tsarna/vinculum-bus"
 )
 
 // Start launches the event processing goroutine, starts reactive expressions
@@ -79,6 +82,36 @@ func (inst *Instance) EnqueueEvent(evt Event) bool {
 	return true
 }
 
+// processDelivered runs one event to completion and then settles whatever
+// delivery carried it here.
+//
+// This is the instance's settle point, and it exists because the deferral
+// declared by DefersDelivery is internal: nothing upstream may settle on
+// OnEvent's return, and there is no downstream subscriber to settle instead.
+// By the time processEvent returns, every hook for this event has run.
+//
+// It settles as handled, and that is honest rather than optimistic. A hook that
+// fails is routed to the machine's own on_error handler and does not propagate
+// (see callHook), so "the hooks ran" is the outcome the FSM has to report; a
+// configuration that wants a hook failure to reach the broker says so with
+// ack = "manual" and settles from the hook itself. Events with no settler on
+// their context — most of them — cost one nil check here.
+func (inst *Instance) processDelivered(ctx context.Context, evt Event) {
+	// A panic must not leave the delivery unsettled, or the broker would hold
+	// it until its lease lapsed with nothing anywhere saying why. Telling the
+	// broker first changes what it hears, not what the process then does.
+	defer func() {
+		if r := recover(); r != nil {
+			bus.SettleRefused(ctx, fmt.Sprintf("panic in fsm %s handling %s: %v", inst.Name(), evt.Name, r))
+			panic(r)
+		}
+	}()
+
+	inst.processEvent(ctx, evt)
+
+	bus.SettleOnReturn(ctx, nil, nil)
+}
+
 // initEventName is a sentinel used internally to trigger on_init processing.
 const initEventName = "\x00__init__"
 
@@ -114,7 +147,7 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 			case restoreEventName:
 				inst.applyRestore(eventCtx, evt.restore.state, evt.restore.storage)
 			default:
-				inst.processEvent(eventCtx, evt)
+				inst.processDelivered(eventCtx, evt)
 			}
 			// After processing, give the shutdown channel priority
 			// before pulling the next regular event.

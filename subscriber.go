@@ -2,6 +2,7 @@ package fsm
 
 import (
 	"context"
+	"errors"
 
 	"github.com/tsarna/go2cty2go"
 	bus "github.com/tsarna/vinculum-bus"
@@ -22,8 +23,19 @@ func (inst *Instance) OnUnsubscribe(_ context.Context, _ string) error {
 	return nil
 }
 
+// ErrInstanceStopped reports an event that was not accepted because the
+// instance has been stopped. It is a refusal rather than a failure: nothing
+// ran, and nothing will.
+var ErrInstanceStopped = errors.New("fsm instance is stopped")
+
 // OnEvent implements bus.Subscriber. It maps the incoming topic to an event
 // definition and enqueues the event for processing.
+//
+// The event is queued, not handled — see DeliveryDisposition. What this returns
+// therefore says only whether the instance took the event, which is why a
+// stopped instance has to report ErrInstanceStopped rather than nil: a caller
+// that acknowledged a broker delivery on the strength of a nil return would be
+// acknowledging an event that was dropped on the floor.
 func (inst *Instance) OnEvent(ctx context.Context, topic string, message any, fields map[string]string) error {
 	// Convert the message to a cty value.
 	var eventValue cty.Value
@@ -37,32 +49,40 @@ func (inst *Instance) OnEvent(ctx context.Context, topic string, message any, fi
 		}
 	}
 
-	// Match topic to an event definition.
-	eventName, topicParams := inst.matchTopic(topic)
-	if eventName == "" {
-		// No event matches this topic -- enqueue as unmatched so only
-		// on_event fires (not an accidental EventByName lookup).
-		inst.EnqueueEvent(Event{
-			Ctx:       ctx,
-			Name:      topic,
-			Value:     eventValue,
-			Fields:    fields,
-			Topic:     topic,
-			unmatched: true,
-		})
-		return nil
+	evt := Event{
+		Ctx:    ctx,
+		Value:  eventValue,
+		Fields: fields,
+		Topic:  topic,
 	}
 
-	inst.EnqueueEvent(Event{
-		Ctx:         ctx,
-		Name:        eventName,
-		Value:       eventValue,
-		Fields:      fields,
-		Topic:       topic,
-		TopicParams: topicParams,
-	})
+	// Match topic to an event definition.
+	if eventName, topicParams := inst.matchTopic(topic); eventName != "" {
+		evt.Name = eventName
+		evt.TopicParams = topicParams
+	} else {
+		// No event matches this topic -- enqueue as unmatched so only
+		// on_event fires (not an accidental EventByName lookup).
+		evt.Name = topic
+		evt.unmatched = true
+	}
+
+	if !inst.EnqueueEvent(evt) {
+		return ErrInstanceStopped
+	}
+
 	return nil
 }
+
+// DeliveryDisposition reports that enqueueing an event is not handling it.
+//
+// OnEvent above returns as soon as the event is on the queue; the hooks run
+// later, on the instance's own goroutine. So a caller settling a broker
+// delivery on that return would acknowledge the message before any of the
+// machine's work had happened — and the deferral is internal, with no
+// downstream subscriber to settle it instead. The event loop settles, once the
+// hooks for that event have run.
+func (inst *Instance) DeliveryDisposition() bus.Disposition { return bus.Deferred }
 
 // PassThrough implements bus.Subscriber.
 func (inst *Instance) PassThrough(_ bus.EventBusMessage) error {
