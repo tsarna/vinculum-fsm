@@ -42,7 +42,25 @@ type Event struct {
 
 	// restore carries validated snapshot data for a restore event.
 	restore *restoreData
+
+	// internal marks an event the instance put on its own mailbox, and is what
+	// the event loop dispatches those on. Name cannot be trusted for that: it
+	// is spelled by whoever sends the event, and an unmatched topic becomes the
+	// name verbatim — so a message from outside the process could otherwise
+	// arrive dressed as an init or a restore.
+	internal internalKind
 }
+
+// internalKind marks the events an instance puts on its own mailbox; everything
+// else, including the shutdown event Stop sends on its priority channel, is
+// external.
+type internalKind uint8
+
+const (
+	external        internalKind = iota // the zero value: every event but init and restore
+	internalInit                        // Start's synthetic on_init event
+	internalRestore                     // a validated snapshot restore
+)
 
 // restoreData holds the validated state and storage for a restore.
 type restoreData struct {
@@ -50,5 +68,7 @@ type restoreData struct {
 	storage map[string]cty.Value
 }
 
-// restoreEventName is a sentinel used internally for restore events.
+// restoreEventName is the Name a restore event carries. It is only a label: the
+// loop dispatches on Event.internal, so a caller may send this name like any
+// other.
 const restoreEventName = "\x00__restore__"

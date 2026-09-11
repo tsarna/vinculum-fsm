@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Instance.QueueDepth()` reports the work a machine has taken on and not
+  finished**: events waiting on the mailbox, producers blocked offering one,
+  and the event whose hooks are running. `Start`'s init event counts until
+  `on_init` returns; the shutdown event `Stop` injects never counts. Unlike
+  `Length`, which is unchanged, it includes the event in flight, so zero means
+  idle — which is what a host waiting for its pipeline to empty needs to know.
+
+### Fixed
+
+- **An event named exactly `"\x00__init__"` or `"\x00__restore__"` crashed the
+  process.** The event loop recognised its own init and restore events by
+  name, and an unmatched topic becomes the event name verbatim, so a message
+  whose topic was one of those strings — each begins with a NUL byte — closed
+  the already-closed `on_init` handshake channel or dereferenced a restore that
+  was not there. Internal events are now recognised by a field nothing outside
+  the package can set, and those names are delivered like any other.
+
 ## [0.6.0] - 2026-09-01
 
 ### Changed

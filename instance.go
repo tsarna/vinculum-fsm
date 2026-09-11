@@ -43,6 +43,12 @@ type Instance struct {
 	initCh     chan struct{}
 	wg         *sync.WaitGroup
 	stopped    atomic.Bool
+
+	// pending counts events offered to the mailbox and not yet finished. It is
+	// raised before an event is offered — by EnqueueEvent, or by Start for its
+	// init event — and dropped when its hooks have run, when the send is
+	// refused, or when Stop discards it unread. See QueueDepth.
+	pending atomic.Int64
 }
 
 // NewInstance creates a new FSM instance from a validated definition.
@@ -230,12 +236,24 @@ func (inst *Instance) Count(_ context.Context) (int64, error) {
 // --- richcty.Lengthable ---
 
 // Length implements richcty.Lengthable. Returns the number of events
-// currently queued for processing.
+// currently queued for processing. The event being processed is not included;
+// QueueDepth counts it.
 func (inst *Instance) Length(_ context.Context) (int64, error) {
 	if inst.eventCh == nil {
 		return 0, nil
 	}
 	return int64(len(inst.eventCh)), nil
+}
+
+// QueueDepth reports how much work this instance has taken on and not
+// finished: events waiting on the mailbox, producers blocked offering one, and
+// the event whose hooks are running. Start's init event counts until on_init
+// returns; the shutdown event Stop injects is never on the mailbox and never
+// counts. Unlike Length it includes the event in flight, so zero means idle.
+func (inst *Instance) QueueDepth() int {
+	// Every drop pairs with a raise. The clamp keeps a bug here from
+	// subtracting from a host's total across all its holders.
+	return max(0, int(inst.pending.Load()))
 }
 
 // --- Snapshot / Restore ---
@@ -280,8 +298,9 @@ func (inst *Instance) restoreFromSnapshot(_ context.Context, snap cty.Value) (ct
 	}
 
 	if !inst.EnqueueEvent(Event{
-		Name:    restoreEventName,
-		restore: &restoreData{state: state, storage: storage},
+		Name:     restoreEventName,
+		restore:  &restoreData{state: state, storage: storage},
+		internal: internalRestore,
 	}) {
 		return cty.NilVal, fmt.Errorf("fsm %q is not running", inst.name)
 	}

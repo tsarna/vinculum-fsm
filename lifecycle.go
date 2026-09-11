@@ -32,7 +32,8 @@ func (inst *Instance) Start(ctx context.Context) error {
 	// Fire on_init for the initial state by enqueueing a synthetic init event.
 	// This runs through the event goroutine to ensure serialization.
 	inst.initCh = make(chan struct{})
-	inst.eventCh <- Event{Name: initEventName}
+	inst.pending.Add(1)
+	inst.eventCh <- Event{Name: initEventName, internal: internalInit}
 
 	// Wait for on_init to complete before returning, so callers know the
 	// FSM is fully initialized.
@@ -41,9 +42,10 @@ func (inst *Instance) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop shuts down the FSM gracefully. If a shutdown_event is configured, it
-// is injected via the priority channel and processed before remaining events.
-// Then the event queue is closed and the processing goroutine exits.
+// Stop shuts down the FSM gracefully. If a shutdown_event is configured, it is
+// injected via the priority channel, the loop ends once it has been processed,
+// and whatever is still queued is abandoned — at most one queued event can run
+// ahead of it. Without one, the loop runs out what is queued and then exits.
 // Stop is idempotent -- calling it multiple times is safe, as is calling it
 // on an instance that was never Started (e.g. config validation that builds
 // then tears down without starting): the channels are nil until Start, so
@@ -65,6 +67,12 @@ func (inst *Instance) Stop() error {
 	if inst.wg != nil {
 		inst.wg.Wait()
 	}
+	// Discard what the loop did not reach — a shutdown event ends it early —
+	// and take each off the count. Not a reset: a producer between its raise
+	// and its refused-send drop would leave the count at -1.
+	for range inst.eventCh {
+		inst.pending.Add(-1)
+	}
 	return nil
 }
 
@@ -75,8 +83,22 @@ func (inst *Instance) EnqueueEvent(evt Event) bool {
 	if inst.eventCh == nil || inst.stopped.Load() {
 		return false
 	}
-	// Use a recover guard: even with the stopped check above, a concurrent
-	// Stop() could close the channel between our check and the send.
+
+	// Counted before the send rather than after, so an event is never
+	// unaccounted for: a blocked producer is work the process has taken on,
+	// and between the send and an increment after it there would be a moment
+	// where the mailbox holds an event nothing reports.
+	inst.pending.Add(1)
+	if !inst.send(evt) {
+		inst.pending.Add(-1)
+		return false
+	}
+	return true
+}
+
+// send puts evt on the mailbox, reporting false if Stop closed it underneath.
+// The recover only contains tsarna/vinculum-fsm#22; the close is still a race.
+func (inst *Instance) send(evt Event) bool {
 	defer func() { recover() }()
 	inst.eventCh <- evt
 	return true
@@ -112,7 +134,9 @@ func (inst *Instance) processDelivered(ctx context.Context, evt Event) {
 	bus.SettleOnReturn(ctx, nil, nil)
 }
 
-// initEventName is a sentinel used internally to trigger on_init processing.
+// initEventName is the Name Start gives its init event. It is only a label: the
+// loop dispatches on Event.internal, so a caller may send this name like any
+// other.
 const initEventName = "\x00__init__"
 
 // eventLoop is the single goroutine that processes events sequentially.
@@ -140,15 +164,7 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 				// Channel closed -- shutdown without shutdown_event.
 				return
 			}
-			eventCtx := process(evt)
-			switch evt.Name {
-			case initEventName:
-				inst.processInit(eventCtx)
-			case restoreEventName:
-				inst.applyRestore(eventCtx, evt.restore.state, evt.restore.storage)
-			default:
-				inst.processDelivered(eventCtx, evt)
-			}
+			inst.runQueued(process(evt), evt)
 			// After processing, give the shutdown channel priority
 			// before pulling the next regular event.
 			select {
@@ -165,10 +181,30 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 	}
 }
 
-// processInit fires the initial state's on_init hook.
-func (inst *Instance) processInit(ctx context.Context) {
-	defer close(inst.initCh)
+// runQueued dispatches one event taken off the mailbox, then drops it from the
+// pending count once its hooks have run.
+func (inst *Instance) runQueued(ctx context.Context, evt Event) {
+	switch evt.internal {
+	case internalInit:
+		inst.processInit(ctx)
+	case internalRestore:
+		inst.applyRestore(ctx, evt.restore.state, evt.restore.storage)
+	default:
+		inst.processDelivered(ctx, evt)
+	}
 
+	inst.pending.Add(-1)
+
+	// Start is waiting on the init event, and is released only after the drop
+	// above, so it never wakes to a count still holding the event it waited for.
+	if evt.internal == internalInit {
+		close(inst.initCh)
+	}
+}
+
+// processInit fires the initial state's on_init hook. runQueued releases Start
+// once it returns.
+func (inst *Instance) processInit(ctx context.Context) {
 	initialState := inst.definition.States[inst.currentState]
 	if initialState != nil && initialState.OnInit != nil {
 		hookCtx := &HookContext{
