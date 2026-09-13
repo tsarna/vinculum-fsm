@@ -36,7 +36,7 @@ func (inst *Instance) processEvent(ctx context.Context, evt Event) {
 	currentState := inst.CurrentState()
 
 	// Match a transition: explicit from-state first, then wildcard.
-	tr := inst.matchTransition(eventDef, currentState)
+	tr := inst.matchTransition(ctx, eventDef, currentState)
 	if tr == nil {
 		// No transition matches -- fire on_event on the current state if present.
 		inst.fireOnEvent(ctx, evt)
@@ -116,7 +116,7 @@ func (inst *Instance) processEvent(ctx context.Context, evt Event) {
 // matchTransition finds the first matching transition for the given event and
 // current state. Explicit from-state matches are checked first (in declaration
 // order), then wildcard transitions.
-func (inst *Instance) matchTransition(eventDef *EventDef, currentState string) *TransitionDef {
+func (inst *Instance) matchTransition(ctx context.Context, eventDef *EventDef, currentState string) *TransitionDef {
 	var wildcards []*TransitionDef
 
 	for _, tr := range eventDef.Transitions {
@@ -125,7 +125,7 @@ func (inst *Instance) matchTransition(eventDef *EventDef, currentState string) *
 			continue
 		}
 		if tr.FromState == currentState {
-			if inst.evaluateGuard(tr) {
+			if inst.evaluateGuard(ctx, tr) {
 				return tr
 			}
 		}
@@ -133,7 +133,7 @@ func (inst *Instance) matchTransition(eventDef *EventDef, currentState string) *
 
 	// Check wildcards after explicit matches.
 	for _, tr := range wildcards {
-		if inst.evaluateGuard(tr) {
+		if inst.evaluateGuard(ctx, tr) {
 			return tr
 		}
 	}
@@ -143,7 +143,11 @@ func (inst *Instance) matchTransition(eventDef *EventDef, currentState string) *
 
 // evaluateGuard checks a transition's guard function. Returns true if the
 // guard is nil (no guard means always match) or if the guard returns true.
-func (inst *Instance) evaluateGuard(tr *TransitionDef) bool {
+// The event's context is what a guard and the on_error behind it are evaluated
+// under, like every other hook: it is what carries the caller's trace and auth,
+// and what marks work the event loop is doing as its own, so that an on_error
+// sending back to this machine is refused rather than deadlocking it.
+func (inst *Instance) evaluateGuard(ctx context.Context, tr *TransitionDef) bool {
 	if tr.Guard == nil {
 		return true
 	}
@@ -153,9 +157,9 @@ func (inst *Instance) evaluateGuard(tr *TransitionDef) bool {
 		Fsm: inst.capsuleVal,
 	}
 
-	result, err := tr.Guard(context.Background(), hookCtx)
+	result, err := tr.Guard(ctx, hookCtx)
 	if err != nil {
-		inst.handleHookError(context.Background(), hookCtx, "guard", err)
+		inst.handleHookError(ctx, hookCtx, "guard", err)
 		return false
 	}
 	return result
@@ -204,5 +208,9 @@ func (inst *Instance) handleHookError(ctx context.Context, hookCtx *HookContext,
 	errCtx := *hookCtx
 	errCtx.Error = err.Error()
 	errCtx.Hook = hookName
+	// UserData is whatever the failing hook cached against the context copied
+	// above, which had neither of the fields just set; a handler reusing it
+	// would never see them.
+	errCtx.UserData = nil
 	inst.definition.OnError(ctx, &errCtx)
 }

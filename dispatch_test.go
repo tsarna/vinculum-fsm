@@ -401,6 +401,7 @@ func (w *testWatcher) OnChange(ctx context.Context, _ richcty.Watchable, old, ne
 func TestDispatch_HookErrorRoutedToOnError(t *testing.T) {
 	var mu sync.Mutex
 	var capturedError, capturedHook string
+	var capturedUserData interface{}
 
 	d := NewDefinition("idle")
 	d.AddState(&StateDef{Name: "idle"})
@@ -409,6 +410,7 @@ func TestDispatch_HookErrorRoutedToOnError(t *testing.T) {
 		mu.Lock()
 		capturedError = hookCtx.Error
 		capturedHook = hookCtx.Hook
+		capturedUserData = hookCtx.UserData
 		mu.Unlock()
 	}
 	d.AddEvent(&EventDef{
@@ -416,7 +418,10 @@ func TestDispatch_HookErrorRoutedToOnError(t *testing.T) {
 		Transitions: []*TransitionDef{
 			{
 				FromState: "idle", ToState: "active",
-				Action: func(_ context.Context, _ *HookContext) error {
+				Action: func(_ context.Context, h *HookContext) error {
+					// What vinculum does: cache something built from a context
+					// with no error in it.
+					h.UserData = "built without ctx.error"
 					return context.DeadlineExceeded
 				},
 			},
@@ -439,5 +444,8 @@ func TestDispatch_HookErrorRoutedToOnError(t *testing.T) {
 	}
 	if capturedHook != "action" {
 		t.Fatalf("expected hook 'action', got %q", capturedHook)
+	}
+	if capturedUserData != nil {
+		t.Fatalf("on_error must not inherit the failing hook's cache, which has no error in it; got %v", capturedUserData)
 	}
 }

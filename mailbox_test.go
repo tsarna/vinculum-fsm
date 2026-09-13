@@ -2,6 +2,7 @@ package fsm
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -57,8 +58,8 @@ func TestQueueDepthCountsTheMailboxAndTheEventInFlight(t *testing.T) {
 
 	const events = 3
 	for i := 0; i < events; i++ {
-		if !inst.EnqueueEvent(Event{Name: "work"}) {
-			t.Fatalf("event %d was refused", i)
+		if err := inst.EnqueueEvent(Event{Name: "work"}); err != nil {
+			t.Fatalf("event %d was refused: %v", i, err)
 		}
 	}
 
@@ -172,7 +173,7 @@ func TestAProducerBlockedOnAFullMailboxIsCounted(t *testing.T) {
 	<-entered
 	inst.EnqueueEvent(Event{Name: "work"}) // fills the one slot
 
-	accepted := make(chan bool, 1)
+	accepted := make(chan error, 1)
 	go func() { accepted <- inst.EnqueueEvent(Event{Name: "work"}) }() // nowhere to go: blocks
 
 	waitFor(t, func() bool { return rawPending(inst) == 3 },
@@ -189,8 +190,229 @@ func TestAProducerBlockedOnAFullMailboxIsCounted(t *testing.T) {
 	// data race of its own (tsarna/vinculum-fsm#22), and not this test's
 	// subject.
 	releaseGate()
-	if !<-accepted {
-		t.Fatal("the blocked producer's event was refused once there was room for it")
+	if err := <-accepted; err != nil {
+		t.Fatalf("the blocked producer's event was refused once there was room for it: %v", err)
+	}
+}
+
+// A hook that sends onto its own machine is running on the only goroutine that
+// empties the mailbox, so it cannot wait for room: once the mailbox is full the
+// send fails instead of parking the loop for good. The events that fit are
+// still taken, the transition completes, and nothing is left on the count. A
+// restore from a hook is a send like any other.
+func TestAHookCannotWaitForRoomOnItsOwnMailbox(t *testing.T) {
+	type outcome struct {
+		sends   []error
+		restore error
+	}
+	done := make(chan outcome, 1)
+
+	snap := cty.ObjectVal(map[string]cty.Value{
+		"_type": cty.StringVal("fsm"),
+		"state": cty.StringVal("busy"),
+	})
+
+	var inst *Instance // assigned before any event can reach the hook
+	d := NewDefinition("idle")
+	d.AddState(&StateDef{Name: "idle"})
+	d.AddState(&StateDef{Name: "busy"})
+	d.QueueSize = 2
+	d.AddEvent(&EventDef{
+		Name: "burst",
+		Transitions: []*TransitionDef{{
+			FromState: "idle",
+			ToState:   "busy",
+			Action: func(ctx context.Context, _ *HookContext) error {
+				var o outcome
+				for i := 0; i < 3; i++ {
+					o.sends = append(o.sends, inst.EnqueueEvent(Event{Ctx: ctx, Name: "noop"}))
+				}
+				_, o.restore = inst.Set(ctx, []cty.Value{snap})
+				done <- o
+				return nil
+			},
+		}},
+	})
+	inst = startInstance(t, "worker", d)
+
+	if err := inst.EnqueueEvent(Event{Name: "burst"}); err != nil {
+		t.Fatalf("burst was refused: %v", err)
+	}
+
+	var o outcome
+	select {
+	case o = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hook never returned: it is waiting for room only its own machine can make")
+	}
+
+	for i, err := range o.sends[:2] {
+		if err != nil {
+			t.Fatalf("send %d fits in the mailbox and should be taken; got %v", i, err)
+		}
+	}
+	if !errors.Is(o.sends[2], ErrMailboxFull) {
+		t.Fatalf("the third send has no room and cannot wait for it; got %v", o.sends[2])
+	}
+	if !errors.Is(o.restore, ErrMailboxFull) {
+		t.Fatalf("a restore from the hook has no room either; got %v", o.restore)
+	}
+
+	waitFor(t, func() bool { return rawPending(inst) == 0 },
+		"the events that were taken never finished, or a refused one stayed on the count")
+	if got, _ := inst.Count(context.Background()); got != 1 {
+		t.Fatalf("the burst transition should have completed exactly once; got %d transitions", got)
+	}
+}
+
+// A guard runs on the event loop like any other hook, so it cannot wait for
+// room on its own machine either. The refusal names the machine, which is the
+// only thing that tells an action which of several machines rejected its event.
+func TestAGuardCannotWaitForRoomOnItsOwnMailbox(t *testing.T) {
+	done := make(chan []error, 1)
+
+	var inst *Instance // assigned before any event can reach the guard
+	d := NewDefinition("idle")
+	d.AddState(&StateDef{Name: "idle"})
+	d.AddState(&StateDef{Name: "done"})
+	d.QueueSize = 1
+	d.AddEvent(&EventDef{
+		Name: "check",
+		Transitions: []*TransitionDef{{
+			FromState: "idle",
+			ToState:   "done",
+			Guard: func(ctx context.Context, _ *HookContext) (bool, error) {
+				var errs []error
+				for i := 0; i < 2; i++ {
+					errs = append(errs, inst.EnqueueEvent(Event{Ctx: ctx, Name: "noop"}))
+				}
+				done <- errs
+				return true, nil
+			},
+		}},
+	})
+	inst = startInstance(t, "worker", d)
+
+	if err := inst.EnqueueEvent(Event{Name: "check"}); err != nil {
+		t.Fatalf("check was refused: %v", err)
+	}
+
+	var errs []error
+	select {
+	case errs = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the guard never returned: it is waiting for room only its own machine can make")
+	}
+
+	if errs[0] != nil {
+		t.Fatalf("the first send fits in the mailbox and should be taken; got %v", errs[0])
+	}
+	if !errors.Is(errs[1], ErrMailboxFull) {
+		t.Fatalf("the second send has no room and cannot wait for it; got %v", errs[1])
+	}
+	if !contains(errs[1].Error(), `fsm "worker"`) {
+		t.Fatalf("a refusal names the machine that refused; got %q", errs[1].Error())
+	}
+}
+
+// The mark is narrower than the context carrying it, which can outlive the hook
+// it was made for. Kept past the end of its event, that context is an ordinary
+// producer again and waits for room like one — the loop has moved on, and will
+// make the room.
+func TestAHookContextKeptPastItsEventWaitsForRoom(t *testing.T) {
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseGate := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseGate()
+
+	kept := make(chan context.Context, 1)
+	d := blockingFSM(entered, release)
+	d.QueueSize = 1
+	d.AddEvent(&EventDef{
+		Name: "grab",
+		Transitions: []*TransitionDef{{
+			FromState: "idle",
+			ToState:   "idle",
+			Action: func(ctx context.Context, _ *HookContext) error {
+				kept <- ctx
+				return nil
+			},
+		}},
+	})
+	inst := startInstance(t, "worker", d)
+
+	inst.EnqueueEvent(Event{Name: "grab"})
+	ctx := <-kept
+	inst.EnqueueEvent(Event{Name: "work"}) // parked in its hook, so grab's event is over
+	<-entered
+	inst.EnqueueEvent(Event{Name: "work"}) // fills the one slot
+
+	assertWaitsForRoom(t, inst, ctx, releaseGate)
+}
+
+// A hook waiting on another machine's full mailbox is ordinary backpressure:
+// that machine's loop is free to make room, so the mark does not apply there.
+func TestAHookWaitsForRoomOnAnotherMachine(t *testing.T) {
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseGate := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseGate()
+
+	target := startInstance(t, "target", func() *Definition {
+		d := blockingFSM(entered, release)
+		d.QueueSize = 1
+		return d
+	}())
+	target.EnqueueEvent(Event{Name: "work"}) // parked in its hook
+	<-entered
+	target.EnqueueEvent(Event{Name: "work"}) // fills the one slot
+
+	hookCtx := make(chan context.Context, 1)
+	hold := make(chan struct{})
+	defer close(hold)
+	d := NewDefinition("idle")
+	d.AddState(&StateDef{Name: "idle"})
+	d.AddEvent(&EventDef{
+		Name: "go",
+		Transitions: []*TransitionDef{{
+			FromState: "idle",
+			ToState:   "idle",
+			Action: func(ctx context.Context, _ *HookContext) error {
+				hookCtx <- ctx
+				<-hold // keep the hook, and so its mark, live while the offer is made
+				return nil
+			},
+		}},
+	})
+	source := startInstance(t, "source", d)
+	source.EnqueueEvent(Event{Name: "go"})
+
+	assertWaitsForRoom(t, target, <-hookCtx, releaseGate)
+}
+
+// assertWaitsForRoom offers an event under ctx to inst, whose one-slot mailbox
+// the caller has filled behind an event parked in its hook, and fails unless
+// the offer blocks rather than being refused. It then opens the gate, and the
+// offer must go through.
+func assertWaitsForRoom(t *testing.T, inst *Instance, ctx context.Context, releaseGate func()) {
+	t.Helper()
+
+	accepted := make(chan error, 1)
+	go func() { accepted <- inst.EnqueueEvent(Event{Ctx: ctx, Name: "work"}) }()
+
+	waitFor(t, func() bool { return rawPending(inst) == 3 },
+		"the offer never reached the machine")
+	select {
+	case err := <-accepted:
+		t.Fatalf("the offer should wait for room; it returned %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseGate()
+	if err := <-accepted; err != nil {
+		t.Fatalf("the offer was refused once there was room for it: %v", err)
 	}
 }
 
@@ -258,8 +480,8 @@ func TestSentinelNamesAreDeliveredLikeAnyOther(t *testing.T) {
 		if err := inst.OnEvent(context.Background(), name, "payload", nil); err != nil {
 			t.Fatalf("%q through OnEvent: %v", name, err)
 		}
-		if !inst.EnqueueEvent(Event{Name: name}) {
-			t.Fatalf("%q through EnqueueEvent was refused", name)
+		if err := inst.EnqueueEvent(Event{Name: name}); err != nil {
+			t.Fatalf("%q through EnqueueEvent was refused: %v", name, err)
 		}
 	}
 

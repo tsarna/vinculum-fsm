@@ -407,8 +407,11 @@ func TestRestore_NotStarted(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for restore on non-started instance")
 	}
-	if !contains(err.Error(), "not running") {
-		t.Fatalf("expected 'not running' error, got %q", err.Error())
+	if !contains(err.Error(), "instance is stopped") {
+		t.Fatalf("expected a stopped-instance error, got %q", err.Error())
+	}
+	if !contains(err.Error(), "test") {
+		t.Fatalf("the error should name the machine that refused, got %q", err.Error())
 	}
 }
 

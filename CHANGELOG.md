@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Instance.EnqueueEvent` returns an `error` instead of a `bool`**:
+  `ErrInstanceStopped` where it used to return `false`, or the new
+  `ErrMailboxFull` (below), each wrapped in an error naming the instance that
+  refused, since the caller that surfaces one usually cannot say which machine
+  it was. Match them with `errors.Is`. `OnEvent` returns the same errors.
+
+- **A guard, and the `on_error` a failing guard routes to, are evaluated under
+  the event's context** rather than `context.Background()`. They now see what
+  every other hook sees — the caller's trace, auth and baggage — and an
+  `on_error` that sends back to its own machine is refused rather than
+  deadlocking it, as it already was from every other hook.
+
+### Fixed
+
+- **A hook sending onto its own instance's full mailbox no longer deadlocks
+  the machine.** `EnqueueEvent` waits for room, and when the sender is one of
+  the machine's own hooks, the goroutine waiting is the event loop — the only
+  thing that makes room — so nothing further was processed until `Stop`. An
+  enqueue made on the machine's own event loop now fails with `ErrMailboxFull`
+  when the mailbox is full instead of waiting. This covers a hook's own send or
+  snapshot restore, and anything a hook sets off: a watcher, a reactive
+  expression. Everyone else still waits for room as before, including a hook
+  sending to a different machine (tsarna/vinculum-fsm#23).
+
+  The loop is recognised by a mark on the context its hooks run under, since Go
+  offers no goroutine identity. Two things follow. A Go hook enqueueing onto its
+  own instance must pass the context it was given, or it is indistinguishable
+  from an outside producer and still deadlocks. And a context outlives the hook
+  it was made for: work a hook hands to another goroutine, such as an
+  asynchronous delivery of something it published, can be refused as the
+  machine's own while that hook is still running, where waiting would have been
+  safe.
+- **`OnError` no longer receives the failing hook's `UserData`.** The
+  `HookContext` handed to `OnError` is a copy of the failing hook's, and it
+  carried along whatever that hook had cached in `UserData` — built before the
+  error existed. A handler that reused the cache, as vinculum's does, never saw
+  the `Error` and `Hook` it was called for.
+
 ## [0.7.0] - 2026-09-10
 
 ### Added

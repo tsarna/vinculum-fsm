@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	bus "github.com/tsarna/vinculum-bus"
 )
@@ -77,11 +78,18 @@ func (inst *Instance) Stop() error {
 }
 
 // EnqueueEvent adds an event to the processing queue. If the queue is full,
-// the call blocks until space is available. Returns false if the instance
-// has been stopped (the event is silently dropped).
-func (inst *Instance) EnqueueEvent(evt Event) bool {
+// the call blocks until space is available — unless evt.Ctx is the context one
+// of this instance's hooks is running under, in which case it returns
+// ErrMailboxFull at once, because the goroutine that would wait is the one that
+// makes room. A Go hook enqueueing onto its own instance must therefore pass
+// the context it was given. Returns ErrInstanceStopped if the instance has been
+// stopped. On any error the event is dropped.
+func (inst *Instance) EnqueueEvent(evt Event) error {
+	// Errors name the machine, because the caller that surfaces one — an action
+	// that sent to a machine by name, a receiver settling a delivery — usually
+	// cannot say which machine refused it.
 	if inst.eventCh == nil || inst.stopped.Load() {
-		return false
+		return fmt.Errorf("fsm %q: %w", inst.name, ErrInstanceStopped)
 	}
 
 	// Counted before the send rather than after, so an event is never
@@ -89,19 +97,83 @@ func (inst *Instance) EnqueueEvent(evt Event) bool {
 	// and between the send and an increment after it there would be a moment
 	// where the mailbox holds an event nothing reports.
 	inst.pending.Add(1)
-	if !inst.send(evt) {
+	if err := inst.send(evt); err != nil {
 		inst.pending.Add(-1)
-		return false
+		return fmt.Errorf("fsm %q: %w", inst.name, err)
 	}
-	return true
+	return nil
 }
 
-// send puts evt on the mailbox, reporting false if Stop closed it underneath.
-// The recover only contains tsarna/vinculum-fsm#22; the close is still a race.
-func (inst *Instance) send(evt Event) bool {
-	defer func() { recover() }()
+// send puts evt on the mailbox, reporting ErrInstanceStopped if Stop closed it
+// underneath. The recover only contains tsarna/vinculum-fsm#22; the close is
+// still a race.
+func (inst *Instance) send(evt Event) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = ErrInstanceStopped
+		}
+	}()
+	if inst.onOwnLoop(evt.Ctx) {
+		select {
+		case inst.eventCh <- evt:
+			return nil
+		default:
+			return ErrMailboxFull
+		}
+	}
 	inst.eventCh <- evt
-	return true
+	return nil
+}
+
+// loopMark tags the context an event's hooks run under, so that an enqueue they
+// cause — a hook's own send, or a watcher or reactive expression it sets off —
+// can be told from one made anywhere else. The event loop is the only thing
+// that empties the mailbox, so a producer running on it that waits for room
+// waits forever.
+//
+// A context is the only identity there is to go on: Go has no goroutine ID. A
+// context travels further than a goroutine, so the mark is narrower than the
+// context carrying it. It names its instance, because a hook waiting on another
+// machine's mailbox is ordinary backpressure; and it is cleared once the
+// event's hooks have returned, because a context kept past then is no longer
+// holding up the loop. While the hooks run, it also catches work a hook has
+// handed to another goroutine — which is right when the hook is waiting on that
+// work, and a refusal that waiting would have survived when it is not.
+//
+// Only the innermost mark is visible, since a nested one shadows it. That is
+// what makes a mark from another instance harmless here, and it is also the
+// limit of the scheme: if a hook of A were to drive B's loop synchronously and
+// B's hook enqueued back onto A, A's mark would be hidden and that send would
+// block while A's loop is parked. Nothing in vinculum can reach that — a send
+// to another machine only enqueues — but an embedder calling into a second
+// instance from a hook can.
+type loopMark struct {
+	inst *Instance
+	done atomic.Bool
+}
+
+type loopMarkKey struct{}
+
+// runOnLoop runs fn for evt under the context its hooks see: the caller's,
+// without its cancellation (see eventLoop), and marked as this instance's loop
+// for as long as fn runs.
+func (inst *Instance) runOnLoop(base context.Context, evt Event, fn func(context.Context, Event)) {
+	c := evt.Ctx
+	if c == nil {
+		c = base
+	}
+	mark := &loopMark{inst: inst}
+	defer mark.done.Store(true)
+	fn(context.WithValue(context.WithoutCancel(c), loopMarkKey{}, mark), evt)
+}
+
+// onOwnLoop reports whether ctx belongs to an event this instance is running.
+func (inst *Instance) onOwnLoop(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	mark, _ := ctx.Value(loopMarkKey{}).(*loopMark)
+	return mark != nil && mark.inst == inst && !mark.done.Load()
 }
 
 // processDelivered runs one event to completion and then settles whatever
@@ -148,15 +220,9 @@ const initEventName = "\x00__init__"
 // upstream cancellation (e.g. an HTTP request completing before its enqueued
 // event is dequeued) cannot interrupt hook processing. Values from the
 // caller's context — trace spans, auth, etc. — are preserved. Events with a
-// nil Ctx fall back to the eventLoop's own ctx.
+// nil Ctx fall back to the eventLoop's own ctx. The context is also marked as
+// this loop's — see loopMark.
 func (inst *Instance) eventLoop(ctx context.Context) {
-	process := func(evt Event) context.Context {
-		c := evt.Ctx
-		if c == nil {
-			c = ctx
-		}
-		return context.WithoutCancel(c)
-	}
 	for {
 		select {
 		case evt, ok := <-inst.eventCh:
@@ -164,18 +230,18 @@ func (inst *Instance) eventLoop(ctx context.Context) {
 				// Channel closed -- shutdown without shutdown_event.
 				return
 			}
-			inst.runQueued(process(evt), evt)
+			inst.runOnLoop(ctx, evt, inst.runQueued)
 			// After processing, give the shutdown channel priority
 			// before pulling the next regular event.
 			select {
 			case evt := <-inst.shutdownCh:
-				inst.processEvent(process(evt), evt)
+				inst.runOnLoop(ctx, evt, inst.processEvent)
 				return
 			default:
 			}
 
 		case evt := <-inst.shutdownCh:
-			inst.processEvent(process(evt), evt)
+			inst.runOnLoop(ctx, evt, inst.processEvent)
 			return
 		}
 	}

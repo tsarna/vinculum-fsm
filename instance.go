@@ -291,18 +291,20 @@ func (inst *Instance) snapshot() cty.Value {
 // restoreFromSnapshot validates a snapshot and enqueues a restore event.
 // Validation is synchronous; the actual state/storage swap is async
 // (processed by the event goroutine like any other event).
-func (inst *Instance) restoreFromSnapshot(_ context.Context, snap cty.Value) (cty.Value, error) {
+func (inst *Instance) restoreFromSnapshot(ctx context.Context, snap cty.Value) (cty.Value, error) {
 	state, storage, err := inst.validateSnapshot(snap)
 	if err != nil {
 		return cty.NilVal, err
 	}
 
-	if !inst.EnqueueEvent(Event{
+	// EnqueueEvent's refusals already name this machine and wrap their sentinel.
+	if err := inst.EnqueueEvent(Event{
+		Ctx:      ctx,
 		Name:     restoreEventName,
 		restore:  &restoreData{state: state, storage: storage},
 		internal: internalRestore,
-	}) {
-		return cty.NilVal, fmt.Errorf("fsm %q is not running", inst.name)
+	}); err != nil {
+		return cty.NilVal, err
 	}
 	return snap, nil
 }

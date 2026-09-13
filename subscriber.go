@@ -26,16 +26,23 @@ func (inst *Instance) OnUnsubscribe(_ context.Context, _ string) error {
 // ErrInstanceStopped reports an event that was not accepted because the
 // instance has been stopped. It is a refusal rather than a failure: nothing
 // ran, and nothing will.
-var ErrInstanceStopped = errors.New("fsm instance is stopped")
+var ErrInstanceStopped = errors.New("instance is stopped")
+
+// ErrMailboxFull reports an event that was not accepted because the instance's
+// mailbox is full and the sender is running on the instance's own event loop —
+// a hook sending back to its own machine, or something a hook set off. Anyone
+// else waits for room; the loop cannot, since it is what makes room.
+var ErrMailboxFull = errors.New("mailbox is full, and the sender is the machine's own event loop")
 
 // OnEvent implements bus.Subscriber. It maps the incoming topic to an event
 // definition and enqueues the event for processing.
 //
 // The event is queued, not handled — see DeliveryDisposition. What this returns
 // therefore says only whether the instance took the event, which is why a
-// stopped instance has to report ErrInstanceStopped rather than nil: a caller
-// that acknowledged a broker delivery on the strength of a nil return would be
-// acknowledging an event that was dropped on the floor.
+// refusal has to be reported rather than nil: a caller that acknowledged a
+// broker delivery on the strength of a nil return would be acknowledging an
+// event that was dropped on the floor. The refusal is EnqueueEvent's —
+// ErrInstanceStopped or ErrMailboxFull.
 func (inst *Instance) OnEvent(ctx context.Context, topic string, message any, fields map[string]string) error {
 	// Convert the message to a cty value.
 	var eventValue cty.Value
@@ -67,11 +74,7 @@ func (inst *Instance) OnEvent(ctx context.Context, topic string, message any, fi
 		evt.unmatched = true
 	}
 
-	if !inst.EnqueueEvent(evt) {
-		return ErrInstanceStopped
-	}
-
-	return nil
+	return inst.EnqueueEvent(evt)
 }
 
 // DeliveryDisposition reports that enqueueing an event is not handling it.
