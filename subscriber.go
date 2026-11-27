@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/tsarna/go2cty2go"
+	"github.com/tsarna/ctyx/go2cty2go"
 	bus "github.com/tsarna/vinculum-bus"
 	"github.com/tsarna/vinculum-bus/topicmatch"
 	"github.com/zclconf/go-cty/cty"
