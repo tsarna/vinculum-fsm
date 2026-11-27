@@ -3,8 +3,7 @@ module github.com/tsarna/vinculum-fsm
 go 1.26.0
 
 require (
-	github.com/tsarna/go2cty2go v0.3.1
-	github.com/tsarna/rich-cty-types v0.5.1
+	github.com/tsarna/ctyx v0.7.0
 	github.com/tsarna/vinculum-bus v0.20.0
 	github.com/zclconf/go-cty v1.20.0
 	go.opentelemetry.io/otel v1.47.0

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Depends on `github.com/tsarna/ctyx` instead of `rich-cty-types` and
+  `go2cty2go`**, which were merged into that module along with seven sibling
+  packages. `richcty` is now `github.com/tsarna/ctyx/richcty` and `go2cty2go` is
+  `github.com/tsarna/ctyx/go2cty2go`; the packages, their contents and this
+  module's own API are unchanged.
+
+  This is a minor rather than a patch bump because the change is not internal:
+  `*Instance` embeds `richcty.WatchableMixin` to satisfy `richcty.Watchable`,
+  and `Watchable`/`Watcher` name each other, so a consumer asserting the
+  interface must be on the same copy of the package. Mixing a v0.8.0 fsm with a
+  consumer already on `ctyx/richcty` compiles cleanly and then fails at runtime
+  with `value of type fsm is not watchable`, so consumers must move in step.
+
 ## [0.8.0] - 2026-09-13
 
 ### Changed
