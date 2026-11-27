@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-27
+
 ### Changed
 
 - **Depends on `github.com/tsarna/ctyx` instead of `rich-cty-types` and
